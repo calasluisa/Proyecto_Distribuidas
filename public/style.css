@@ -1,0 +1,136 @@
+:root {
+    color: #263238;
+    font-family: "Segoe UI", Tahoma, sans-serif;
+    background: #f4f1ec;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    padding: 32px 18px;
+    background: linear-gradient(135deg, #f8f5ef, #e8f0ee);
+}
+
+.app { max-width: 900px; margin: 0 auto; }
+
+.eyebrow {
+    color: #a66a3f;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 3px;
+    margin: 0 0 8px;
+}
+
+h1 { color: #173c3d; margin: 0 0 8px; }
+.subtitle { color: #617172; margin: 0 auto 20px; }
+
+#usernameInput, #groupBy {
+    border: 1px solid #cbd6d2;
+    border-radius: 6px;
+    font-size: 14px;
+    padding: 10px 12px;
+}
+
+#usernameInput { width: 220px; margin-right: 8px; }
+#groupBy { background: white; }
+
+button {
+    border: 0;
+    border-radius: 7px;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 10px 18px;
+}
+
+button:disabled { cursor: not-allowed; }
+.secondary-btn { background: #dce8e5; color: #173c3d; }
+
+.view-controls {
+    align-items: center;
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    margin: 22px 0 12px;
+}
+
+.legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    justify-content: center;
+    margin: 16px 0 22px;
+    font-size: 13px;
+}
+
+.legend span { align-items: center; display: flex; gap: 6px; }
+.legend i { border-radius: 50%; display: inline-block; height: 12px; width: 12px; }
+.available-key { background: #a8c9bc; }
+.reserved-key { background: #eabf54; }
+.booked-key { background: #b66b61; }
+
+.room-group {
+    background: rgba(255, 255, 255, .72);
+    border: 1px solid #dae2de;
+    border-radius: 12px;
+    margin-bottom: 16px;
+    padding: 16px;
+}
+
+.room-group h2 { color: #315d5b; font-size: 17px; margin: 0 0 12px; text-align: left; }
+.room-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); }
+
+.room {
+    align-items: flex-start;
+    background: #d9ebe4;
+    color: #214b49;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-height: 84px;
+    text-align: left;
+    transition: transform .15s ease, box-shadow .15s ease;
+}
+
+.room:hover:not(:disabled) { box-shadow: 0 5px 12px #315d5b30; transform: translateY(-2px); }
+.room strong { font-size: 17px; }
+.room span, .room small { font-size: 12px; }
+.room.reserved { background: #f3d37b; color: #5a431a; }
+.room.booked { background: #c78379; color: white; }
+
+#timerDisplay { color: #9a5d31; min-height: 22px; margin-top: 12px; }
+
+.purchase-summary, .admin-panel {
+    background: white;
+    border: 1px solid #dae2de;
+    border-radius: 12px;
+    margin: 20px auto;
+    max-width: 520px;
+    padding: 18px;
+}
+
+h2 { font-size: 18px; margin: 0 0 10px; }
+.total { font-size: 18px; }
+#bookBtn { background: #315d5b; color: white; }
+#bookBtn:hover { background: #214b49; }
+
+.room-stats { display: flex; gap: 10px; justify-content: center; }
+.room-stats div {
+    background: #eef4f1;
+    border-radius: 7px;
+    display: flex;
+    flex-direction: column;
+    min-width: 100px;
+    padding: 10px;
+}
+.room-stats strong { font-size: 22px; }
+.room-stats span { font-size: 12px; }
+.admin-actions { display: flex; gap: 8px; justify-content: center; margin-top: 16px; }
+.admin-actions button { background: #c58a43; color: white; }
+.admin-actions .danger-btn { background: #ad514b; }
+
+@media (max-width: 560px) {
+    #usernameInput { margin: 8px 0; width: 100%; }
+    .secondary-btn { width: 100%; }
+    .room-grid { grid-template-columns: repeat(2, 1fr); }
+}

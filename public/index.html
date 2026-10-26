@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+    <title>Hotel Vista - Reserva de habitaciones</title>
+</head>
+<body>
+
+    <main class="app">
+        <p class="eyebrow">HOTEL VISTA</p>
+        <h1>Reserva tu habitación</h1>
+        <p class="subtitle">Consulta la disponibilidad en tiempo real por piso o tipo de habitación.</p>
+        <input type="text" id="usernameInput" placeholder="Nombre del huésped" maxlength="50">
+        <button id="adminToggle" class="secondary-btn" type="button">Panel de administrador</button>
+        <div id="timerDisplay"></div>
+        <div class="view-controls" aria-label="Organizar habitaciones">
+            <label for="groupBy">Agrupar por</label>
+            <select id="groupBy">
+                <option value="floor">Piso</option>
+                <option value="type">Tipo de habitación</option>
+            </select>
+        </div>
+        <div class="legend">
+            <span><i class="available-key"></i>Disponible</span>
+            <span><i class="reserved-key"></i>Reservado</span>
+            <span><i class="booked-key"></i>Ocupada</span>
+        </div>
+        <div id="rooms"></div>
+        <section class="purchase-summary" aria-live="polite">
+            <h2>Resumen de reserva</h2>
+            <p id="selectedSummary">Selecciona una o más habitaciones.</p>
+            <p class="total">Total por noche: <strong id="totalDisplay">$0.00</strong></p>
+            <button id="bookBtn" type="button">Confirmar reserva</button>
+        </section>
+
+        <section id="adminPanel" class="admin-panel" hidden>
+            <h2>Panel de administrador</h2>
+            <div id="roomStats" class="room-stats"></div>
+            <div class="admin-actions">
+                <button id="releaseAllBtn" type="button">Liberar todo</button>
+                <button id="resetRoomsBtn" class="danger-btn" type="button">Restablecer habitaciones</button>
+            </div>
+        </section>
+    </main>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="script.js"></script>
+
+</body>
+</html>
