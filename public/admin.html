@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:," />
+    <title>HotelSync - Administrador</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/admin.js" defer></script>
+  </head>
+  <body>
+    <div class="app">
+      <header class="cabecera">
+        <div class="cabecera__marca">HotelSync · Admin</div>
+        <p class="cabecera__fecha">Hoy es <span id="hoy">—</span></p>
+        <div class="cabecera__estado">
+          <span id="conexion" class="conexion">
+            <span class="conexion__punto"></span>
+            <span id="conexion-texto">Conectando…</span>
+          </span>
+          <a href="/" class="boton boton--texto">Ir al panel de recepción</a>
+        </div>
+      </header>
+
+      <section class="admin-stats" aria-label="Contadores">
+        <div class="stat"><div class="number" id="c-disponible">0</div>Disponibles</div>
+        <div class="stat"><div class="number" id="c-reservada">0</div>Reservadas</div>
+        <div class="stat"><div class="number" id="c-ocupada">0</div>Ocupadas</div>
+        <div class="stat"><div class="number" id="c-limpieza">0</div>En limpieza</div>
+        <div class="stat"><div class="number" id="c-mantenimiento">0</div>Mantenimiento</div>
+        <div class="stat"><div class="number" id="c-ingresos">$0.00</div>Ingresos</div>
+      </section>
+
+      <section class="admin-actions" aria-label="Acciones de administración">
+        <button id="btn-liberar" type="button" class="boton admin-boton--warning">
+          Liberar bloqueos temporales
+        </button>
+        <button id="btn-reset" type="button" class="boton admin-boton--danger">
+          Resetear hotel (borra reservas)
+        </button>
+      </section>
+      <p class="admin-ayuda">
+        "Liberar bloqueos" quita las reservas temporales de 60 s (no afecta reservas confirmadas).
+        "Resetear hotel" devuelve todas las habitaciones a disponible y cancela todas las reservas activas.
+      </p>
+
+      <div class="pisos" id="panel-pisos"></div>
+    </div>
+
+    <p id="aviso" class="aviso" role="status" hidden></p>
+  </body>
+</html>

@@ -1,52 +1,196 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="style.css">
-    <title>Hotel Vista - Reserva de habitaciones</title>
-</head>
-<body>
-
-    <main class="app">
-        <p class="eyebrow">HOTEL VISTA</p>
-        <h1>Reserva tu habitación</h1>
-        <p class="subtitle">Consulta la disponibilidad en tiempo real por piso o tipo de habitación.</p>
-        <input type="text" id="usernameInput" placeholder="Nombre del huésped" maxlength="50">
-        <button id="adminToggle" class="secondary-btn" type="button">Panel de administrador</button>
-        <div id="timerDisplay"></div>
-        <div class="view-controls" aria-label="Organizar habitaciones">
-            <label for="groupBy">Agrupar por</label>
-            <select id="groupBy">
-                <option value="floor">Piso</option>
-                <option value="type">Tipo de habitación</option>
-            </select>
-        </div>
-        <div class="legend">
-            <span><i class="available-key"></i>Disponible</span>
-            <span><i class="reserved-key"></i>Reservado</span>
-            <span><i class="booked-key"></i>Ocupada</span>
-        </div>
-        <div id="rooms"></div>
-        <section class="purchase-summary" aria-live="polite">
-            <h2>Resumen de reserva</h2>
-            <p id="selectedSummary">Selecciona una o más habitaciones.</p>
-            <p class="total">Total por noche: <strong id="totalDisplay">$0.00</strong></p>
-            <button id="bookBtn" type="button">Confirmar reserva</button>
-        </section>
-
-        <section id="adminPanel" class="admin-panel" hidden>
-            <h2>Panel de administrador</h2>
-            <div id="roomStats" class="room-stats"></div>
-            <div class="admin-actions">
-                <button id="releaseAllBtn" type="button">Liberar todo</button>
-                <button id="resetRoomsBtn" class="danger-btn" type="button">Restablecer habitaciones</button>
-            </div>
-        </section>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:," />
+    <title>HotelSync - Panel de recepción</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/script.js" defer></script>
+  </head>
+  <body>
+    <!-- Login -->
+    <main id="login" class="login">
+      <form id="login-form" class="login__ficha">
+        <h1 class="login__marca">HotelSync</h1>
+        <p>
+          Ingresa tu nombre para abrir el panel de recepción. Tus compañeros verán tu nombre
+          cuando reserves o cambies el estado de una habitación.
+        </p>
+        <label class="campo">
+          <span>Nombre del recepcionista</span>
+          <input id="login-nombre" maxlength="30" autocomplete="off" required />
+        </label>
+        <p id="login-error" class="mensaje mensaje--error" role="alert" hidden></p>
+        <p id="login-conectando" class="mensaje">Conectando con el servidor…</p>
+        <button type="submit" id="login-btn" class="boton boton--principal" disabled>
+          Entrar al panel
+        </button>
+      </form>
     </main>
 
-    <script src="/socket.io/socket.io.js"></script>
-    <script src="script.js"></script>
+    <!-- App -->
+    <div id="app" class="app" hidden>
+      <header class="cabecera">
+        <div class="cabecera__marca">HotelSync</div>
+        <p class="cabecera__fecha">Hoy es <span id="hoy"></span></p>
+        <div class="cabecera__estado">
+          <span id="conexion" class="conexion"><span class="conexion__punto"></span><span id="conexion-texto">Conectando…</span></span>
+          <span id="usuario" class="cabecera__usuario"></span>
+          <a href="/admin" class="boton boton--texto" title="Panel de administrador">Admin</a>
+          <button type="button" id="cambiar-usuario" class="boton boton--texto">
+            Cambiar usuario
+          </button>
+        </div>
+      </header>
 
-</body>
+      <section class="filtros" aria-label="Filtros">
+        <div class="filtros__fila">
+          <div id="filtros-piso" class="segmentos" role="group" aria-label="Piso"></div>
+          <label class="selector">
+            <span>Tipo</span>
+            <select id="filtro-tipo">
+              <option value="todos">Todos los tipos</option>
+            </select>
+          </label>
+        </div>
+        <div id="leyenda" class="leyenda" role="group" aria-label="Estado"></div>
+      </section>
+
+      <div class="contenido">
+        <main id="panel-pisos"></main>
+        <aside class="lateral">
+          <section class="bloque">
+            <h2 class="bloque__titulo">
+              Reservas vigentes <span id="reservas-cuenta" class="bloque__cuenta">0</span>
+            </h2>
+            <ul id="reservas-lista" class="reservas"></ul>
+            <p id="reservas-vacio" class="bloque__vacio">
+              No hay reservas vigentes. Abre una habitación para crear la primera.
+            </p>
+          </section>
+          <section class="bloque">
+            <h2 class="bloque__titulo">Actividad en vivo</h2>
+            <ol id="bitacora" class="bitacora" aria-live="polite"></ol>
+            <p id="bitacora-vacio" class="bloque__vacio">
+              Todavía no hay actividad.
+            </p>
+          </section>
+        </aside>
+      </div>
+    </div>
+
+    <!-- Modal habitación -->
+    <dialog id="modal" class="modal">
+      <div id="modal-cabecera" class="modal__cabecera">
+        <div>
+          <h2 id="modal-titulo"></h2>
+          <p id="modal-subtitulo"></p>
+        </div>
+        <span id="modal-estado" class="modal__estado"></span>
+      </div>
+      <div class="modal__cuerpo">
+        <p id="modal-servicios" class="modal__servicios"></p>
+        <p id="modal-actual" class="modal__actual" hidden></p>
+        <div id="modal-acciones" class="modal__acciones"></div>
+
+        <div id="modal-reservas" class="modal__reservas" hidden>
+          <h3>Reservas de esta habitación</h3>
+          <ul id="modal-reservas-lista"></ul>
+        </div>
+
+        <div id="modal-nueva" class="modal__nueva">
+          <button type="button" id="btn-reservar" class="boton boton--laton">
+            Reservar esta habitación
+          </button>
+          <p id="modal-bloqueo-aviso" class="mensaje" hidden></p>
+        </div>
+
+        <form id="form-reserva" class="formulario" hidden>
+          <p class="formulario__tiempo" role="timer">
+            Habitación bloqueada para ti: <strong id="form-tiempo">60 s</strong>
+          </p>
+          <label class="campo">
+            <span>Cédula</span>
+            <input id="form-cedula" inputmode="numeric" maxlength="10" required />
+          </label>
+          <label class="campo">
+            <span>Nombre completo</span>
+            <input id="form-nombre" maxlength="100" required />
+          </label>
+          <label class="campo">
+            <span>Correo</span>
+            <input id="form-correo" type="email" maxlength="100" required />
+          </label>
+          <div class="formulario__fechas">
+            <label class="campo">
+              <span>Entrada</span>
+              <input id="form-entrada" type="date" required />
+            </label>
+            <label class="campo">
+              <span>Salida</span>
+              <input id="form-salida" type="date" required />
+            </label>
+          </div>
+          <p id="form-total" class="formulario__total"></p>
+          <div class="formulario__botones">
+            <button type="button" id="form-volver" class="boton boton--suave">Volver</button>
+            <button type="submit" id="form-confirmar" class="boton boton--principal">
+              Revisar y confirmar
+            </button>
+          </div>
+        </form>
+
+        <p id="modal-error" class="mensaje mensaje--error" role="alert" hidden></p>
+      </div>
+      <button type="button" id="modal-cerrar" class="modal__cerrar boton boton--texto">
+        Cerrar
+      </button>
+    </dialog>
+
+    <!-- Modal factura / recibo -->
+    <dialog id="invoice-modal" class="modal">
+      <div id="invoice-cabecera" class="modal__cabecera modal__cabecera--reservada">
+        <div>
+          <h2 id="invoice-titulo">Confirmar reserva</h2>
+          <p id="invoice-subtitulo"></p>
+        </div>
+      </div>
+      <div class="modal__cuerpo">
+        <table class="invoice-table">
+          <tbody>
+            <tr><th>Habitación</th><td id="invoice-hab"></td></tr>
+            <tr><th>Cliente</th><td id="invoice-cliente"></td></tr>
+            <tr><th>Cédula</th><td id="invoice-cedula"></td></tr>
+            <tr><th>Correo</th><td id="invoice-correo"></td></tr>
+            <tr><th>Entrada</th><td id="invoice-entrada"></td></tr>
+            <tr><th>Salida</th><td id="invoice-salida"></td></tr>
+            <tr><th>Noches</th><td id="invoice-noches"></td></tr>
+            <tr><th>Precio por noche</th><td id="invoice-precio"></td></tr>
+            <tr class="invoice-total"><th>Total</th><td id="invoice-total"></td></tr>
+          </tbody>
+        </table>
+        <div class="formulario__botones" id="invoice-botones">
+          <button type="button" id="invoice-volver" class="boton boton--suave">
+            Volver al formulario
+          </button>
+          <button type="button" id="invoice-confirmar" class="boton boton--principal">
+            Confirmar reserva
+          </button>
+        </div>
+      </div>
+      <button type="button" id="invoice-cerrar" class="modal__cerrar boton boton--texto">
+        Cerrar
+      </button>
+    </dialog>
+
+    <p id="aviso" class="aviso" role="status" hidden></p>
+  </body>
 </html>

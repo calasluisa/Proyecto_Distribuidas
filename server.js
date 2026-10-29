@@ -1,223 +1,279 @@
-// Servidor con Express y Socket.IO para reservas de habitaciones de hotel.
+// HotelSync - servidor con Express + Socket.io + MySQL
+const path = require('path');
 const express = require('express');
 const http = require('http');
-const net = require('net');
-const dgram = require('dgram');
-const path = require('path');
-const socketIo = require('socket.io');
+const { Server } = require('socket.io');
 
-//Instanciamos express
+const { pool, transaccion } = require('./db');
+const locks = require('./locks');
+const habitaciones = require('./habitaciones');
+const reservas = require('./reservas');
+const realtime = require('./realtime');
+const bitacora = require('./bitacora');
+const { hoy, ErrorNegocio } = require('./utils');
+
 const app = express();
-
-//Creamos el servidor HTTP
 const server = http.createServer(app);
+const io = new Server(server);
 
-//Crear servidor WebSocket
-const io = socketIo(server);
-
-//Servir los archivos estáticos desde la carpeta "public"
 app.use(express.static(path.join(__dirname, 'public')));
 
-const roomCatalog = [
-  { floor: 1, rooms: ['101', '102', '103', '104', '105', '106'] },
-  { floor: 2, rooms: ['201', '202', '203', '204', '205', '206'] },
-  { floor: 3, rooms: ['301', '302', '303', '304', '305', '306'] }
-];
-const roomTypes = ['standard', 'deluxe', 'suite'];
-const roomPrices = { standard: 75, deluxe: 110, suite: 165 };
-const rooms = {};
-
-roomCatalog.forEach(({ floor, rooms: floorRooms }) => {
-  floorRooms.forEach((number, index) => {
-    const type = roomTypes[index % roomTypes.length];
-    rooms[number] = {
-      floor,
-      type,
-      price: roomPrices[type],
-      status: 'available',
-      user: '',
-      expiresAt: 0
-    };
-  });
+// Panel de administrador: http://localhost:3000/admin
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
-const createAvailableRoom = (room) => ({
-  floor: room.floor,
-  type: room.type,
-  price: room.price,
-  status: 'available',
-  user: '',
-  expiresAt: 0
-});
+realtime.iniciar(io);
 
-const tcpClients = new Set();
-const udpClients = new Map();
-const sendJson = (socket, message) => socket.write(`${JSON.stringify(message)}\n`);
-
-function broadcastRooms() {
-  io.emit('rooms:update', rooms);
-  tcpClients.forEach(client => sendJson(client, { event: 'rooms:update', rooms }));
-  udpClients.forEach(client => {
-    client.socket.send(Buffer.from(JSON.stringify({ event: 'rooms:update', rooms })), client.port, client.address);
-  });
+// Estado completo que recibe un cliente normal al conectarse
+async function estadoInicial() {
+  const [pisos, tipos, habs, reservasVig, eventos] = await Promise.all([
+    habitaciones.pisos(),
+    habitaciones.tipos(),
+    habitaciones.listar(),
+    reservas.listarVigentes(),
+    bitacora.ultimos(20),
+  ]);
+  return {
+    hoy: hoy(),
+    pisos,
+    tipos,
+    habitaciones: habs,
+    reservas: reservasVig,
+    bloqueos: locks.listar(),
+    eventos,
+  };
 }
 
-function reserveRoom(roomId, username) {
-  const room = rooms[roomId];
-  if (!room || room.status !== 'available') return { ok: false, error: 'Habitación no disponible' };
+// Estado que recibe el panel de administrador (incluye ingresos)
+async function estadoAdmin() {
+  const [pisos, tipos, habs, ingresosRes] = await Promise.all([
+    habitaciones.pisos(),
+    habitaciones.tipos(),
+    habitaciones.listar(),
+    pool.query(
+      `SELECT COALESCE(SUM(total),0) AS total FROM reservas WHERE estado IN ('en_curso','finalizada')`
+    ),
+  ]);
+  return {
+    hoy: hoy(),
+    pisos,
+    tipos,
+    habitaciones: habs,
+    bloqueos: locks.listar(),
+    ingresos: Number(ingresosRes[0][0].total) || 0,
+  };
+}
 
-  room.status = 'reserved';
-  room.user = username || 'Usuario';
-  room.expiresAt = Date.now() + 60000;
-  const reservation = { roomId, user: room.user, expiresAt: room.expiresAt };
-  io.emit('reserve', reservation);
-  broadcastRooms();
-
-  setTimeout(() => {
-    const currentRoom = rooms[roomId];
-    if (currentRoom && currentRoom.status === 'reserved' && Date.now() >= currentRoom.expiresAt) {
-      rooms[roomId] = createAvailableRoom(currentRoom);
-      io.emit('release', roomId);
-      broadcastRooms();
+// Envuelve un manejador para responder con { ok, ... } o { ok: false, error }
+function responder(fn) {
+  return async (datos, cb) => {
+    const respuesta = typeof cb === 'function' ? cb : () => {};
+    try {
+      respuesta({ ok: true, ...(await fn(datos)) });
+    } catch (err) {
+      if (!(err instanceof ErrorNegocio)) console.error('Error inesperado:', err);
+      respuesta({
+        ok: false,
+        error: err instanceof ErrorNegocio ? err.message : 'Error interno del servidor',
+      });
     }
-  }, 60000);
-  return { ok: true, data: reservation };
+  };
 }
 
-function releaseRoom(roomId, username) {
-  const room = rooms[roomId];
-  if (!room || room.status !== 'reserved' || room.user !== username) {
-    return { ok: false, error: 'La habitación no está reservada por este huésped' };
-  }
-  rooms[roomId] = createAvailableRoom(room);
-  io.emit('release', roomId);
-  broadcastRooms();
-  return { ok: true };
-}
+// Cambiar estado de habitación (checkin, checkout, limpieza, mantenimiento)
+const ACCIONES = ['checkin', 'checkout', 'limpieza-terminada', 'mantenimiento-on', 'mantenimiento-off'];
 
-function bookRooms(roomIds, username) {
-  if (!Array.isArray(roomIds)) return { ok: false, error: 'roomIds debe ser un arreglo' };
-  const booked = [];
-  roomIds.forEach(roomId => {
-    const room = rooms[roomId];
-    if (room && room.status === 'reserved' && room.user === username) {
-      room.status = 'booked';
-      room.expiresAt = 0;
-      booked.push(roomId);
-      io.emit('booked', { roomId, user: room.user });
-    }
-  });
-  if (booked.length) broadcastRooms();
-  return { ok: true, data: { booked } };
-}
+async function cambiarEstado(habitacionId, accion, usuario) {
+  if (!Number.isInteger(habitacionId)) throw new ErrorNegocio('Habitación inválida');
+  if (!ACCIONES.includes(accion)) throw new ErrorNegocio('Acción no reconocida');
 
-function resetRooms(onlyReserved) {
-  Object.keys(rooms).forEach(roomId => {
-    if (!onlyReserved || rooms[roomId].status === 'reserved') {
-      rooms[roomId] = createAvailableRoom(rooms[roomId]);
-    }
-  });
-  broadcastRooms();
-}
+  const resultado = await locks.conBloqueo([habitacionId], () =>
+    transaccion(async (conn) => {
+      const [filasHab] = await conn.query(
+        'SELECT id, numero, estado AS estadoFisico FROM habitaciones WHERE id = ?',
+        [habitacionId]
+      );
+      const hab = filasHab[0];
+      if (!hab) throw new ErrorNegocio('La habitación no existe');
+      const fisico = hab.estadoFisico;
+      let reservaId = null;
+      let mensaje = '';
 
-function processCommand(command, clientState) {
-  if (!command || typeof command !== 'object') return { ok: false, error: 'Mensaje JSON inválido' };
-  if (command.action === 'setUsername') {
-    clientState.username = String(command.username || 'Usuario').trim().slice(0, 50) || 'Usuario';
-    return { ok: true, data: { username: clientState.username } };
-  }
-  if (command.action === 'list') return { ok: true, data: rooms };
-  if (!clientState.username) return { ok: false, error: 'Primero usa setUsername' };
-  if (command.action === 'reserve') return reserveRoom(String(command.roomId), clientState.username);
-  if (command.action === 'release') return releaseRoom(String(command.roomId), clientState.username);
-  if (command.action === 'book') return bookRooms(command.roomIds, clientState.username);
-  return { ok: false, error: 'Acción desconocida' };
-}
-
-const tcpServer = net.createServer(socket => {
-  const clientState = { username: '' };
-  tcpClients.add(socket);
-  sendJson(socket, { event: 'init', rooms });
-  let buffer = '';
-
-  socket.on('data', chunk => {
-    buffer += chunk.toString();
-    const messages = buffer.split('\n');
-    buffer = messages.pop();
-    messages.filter(Boolean).forEach(message => {
-      let response;
-      try {
-        response = processCommand(JSON.parse(message), clientState);
-      } catch {
-        response = { ok: false, error: 'Mensaje JSON inválido' };
+      if (accion === 'checkin') {
+        if (fisico !== 'disponible')
+          throw new ErrorNegocio(`La habitación ${hab.numero} no está disponible para check-in`);
+        const hoyStr = hoy();
+        const [res] = await conn.query(
+          `SELECT id FROM reservas
+           WHERE habitacion_id = ? AND estado = 'activa'
+             AND fecha_entrada <= ? AND fecha_salida > ?
+           LIMIT 1`,
+          [habitacionId, hoyStr, hoyStr]
+        );
+        if (!res[0])
+          throw new ErrorNegocio(`La habitación ${hab.numero} no tiene una reserva activa para hoy`);
+        reservaId = res[0].id;
+        await conn.query(`UPDATE habitaciones SET estado = 'ocupada' WHERE id = ?`, [habitacionId]);
+        await conn.query(`UPDATE reservas SET estado = 'en_curso' WHERE id = ?`, [reservaId]);
+        mensaje = `Check-in en la habitación ${hab.numero}`;
+      } else if (accion === 'checkout') {
+        if (fisico !== 'ocupada') throw new ErrorNegocio(`La habitación ${hab.numero} no está ocupada`);
+        const [res] = await conn.query(
+          `SELECT id FROM reservas WHERE habitacion_id = ? AND estado = 'en_curso' ORDER BY id DESC LIMIT 1`,
+          [habitacionId]
+        );
+        if (res[0]) {
+          reservaId = res[0].id;
+          await conn.query(`UPDATE reservas SET estado = 'finalizada' WHERE id = ?`, [reservaId]);
+        }
+        await conn.query(`UPDATE habitaciones SET estado = 'limpieza' WHERE id = ?`, [habitacionId]);
+        mensaje = `Check-out en la habitación ${hab.numero}`;
+      } else if (accion === 'limpieza-terminada') {
+        if (fisico !== 'limpieza') throw new ErrorNegocio(`La habitación ${hab.numero} no está en limpieza`);
+        await conn.query(`UPDATE habitaciones SET estado = 'disponible' WHERE id = ?`, [habitacionId]);
+        mensaje = `Limpieza terminada en la habitación ${hab.numero}`;
+      } else if (accion === 'mantenimiento-on') {
+        if (fisico !== 'disponible' && fisico !== 'limpieza')
+          throw new ErrorNegocio(`La habitación ${hab.numero} no puede pasar a mantenimiento desde ${fisico}`);
+        await conn.query(`UPDATE habitaciones SET estado = 'mantenimiento' WHERE id = ?`, [habitacionId]);
+        mensaje = `La habitación ${hab.numero} pasó a mantenimiento`;
+      } else {
+        if (fisico !== 'mantenimiento')
+          throw new ErrorNegocio(`La habitación ${hab.numero} no está en mantenimiento`);
+        await conn.query(`UPDATE habitaciones SET estado = 'disponible' WHERE id = ?`, [habitacionId]);
+        mensaje = `La habitación ${hab.numero} terminó el mantenimiento`;
       }
-      sendJson(socket, response);
-    });
-  });
-  socket.on('close', () => tcpClients.delete(socket));
-  socket.on('error', () => tcpClients.delete(socket));
-});
+      return { reservaId, mensaje };
+    })
+  );
 
-const udpServer = dgram.createSocket('udp4');
-udpServer.on('message', (message, remote) => {
-  const clientKey = `${remote.address}:${remote.port}`;
-  const clientState = udpClients.get(clientKey) || { username: '' };
-  udpClients.set(clientKey, { ...clientState, socket: udpServer, port: remote.port, address: remote.address });
-  let response;
-  try {
-    response = processCommand(JSON.parse(message.toString()), clientState);
-  } catch {
-    response = { ok: false, error: 'Mensaje JSON inválido' };
-  }
-  udpServer.send(Buffer.from(JSON.stringify(response)), remote.port, remote.address);
-});
+  const habitacion = await habitaciones.obtener(habitacionId);
+  const reserva = resultado.reservaId ? await reservas.formatear(pool, resultado.reservaId) : null;
+  realtime.emitir('estado-cambiado', { habitacion, reserva, por: usuario });
+  await bitacora.registrar('estado', resultado.mensaje, usuario);
+  return { habitacion, reserva };
+}
 
-//Manejo de conexión de clientes
+// Cuando un bloqueo vence solo, se avisa a todos
+locks.alExpirar((habitacionId) =>
+  realtime.emitir('habitacion-desbloqueada', { habitacionId, expirado: true })
+);
+
 io.on('connection', (socket) => {
-  socket.emit('init', rooms);
+  console.log(`Cliente conectado: ${socket.id}`);
 
-  //Registrar nombre del cliente
-  socket.on('setUsername', (username) => {
-    socket.username = username;
+  const exigirUsuario = () => {
+    if (!socket.username) throw new ErrorNegocio('Identifíquese antes de continuar');
+    return socket.username;
+  };
+
+  socket.on('setUsername', responder((nombre) => {
+    const limpio = String(nombre || '').trim();
+    if (limpio.length < 2 || limpio.length > 30)
+      throw new ErrorNegocio('El nombre debe tener entre 2 y 30 caracteres');
+    socket.username = limpio;
+    return { usuario: limpio };
+  }));
+
+  socket.on('bloquear-habitacion', responder(async (habitacionId) => {
+    const usuario = exigirUsuario();
+    const hab = Number.isInteger(habitacionId) ? await habitaciones.obtener(habitacionId) : null;
+    if (!hab) throw new ErrorNegocio('La habitación no existe');
+    if (hab.estadoFisico === 'mantenimiento')
+      throw new ErrorNegocio(`La habitación ${hab.numero} está en mantenimiento`);
+
+    locks.liberarDeSocket(socket.id).forEach((id) => {
+      if (id !== habitacionId) realtime.emitir('habitacion-desbloqueada', { habitacionId: id });
+    });
+
+    const r = locks.bloquear(habitacionId, socket.id, usuario);
+    if (!r.ok)
+      throw new ErrorNegocio(`La habitación ${hab.numero} está siendo reservada por ${r.bloqueo.usuario}`);
+
+    realtime.emitir('habitacion-bloqueada', r.bloqueo);
+    return { bloqueo: r.bloqueo };
+  }));
+
+  socket.on('desbloquear-habitacion', responder((habitacionId) => {
+    if (locks.liberar(habitacionId, socket.id)) {
+      realtime.emitir('habitacion-desbloqueada', { habitacionId });
+    }
+    return {};
+  }));
+
+  socket.on('crear-reserva', responder((datos) => reservas.crear(datos, exigirUsuario(), socket.id)));
+  socket.on('cancelar-reserva', responder((reservaId) => reservas.cancelar(reservaId, exigirUsuario())));
+  socket.on('cambiar-estado', responder((datos) =>
+    cambiarEstado(datos && datos.habitacionId, datos && datos.accion, exigirUsuario())
+  ));
+
+  // ---- ADMIN ----
+
+  // El panel de administrador pide el estado completo (incluye ingresos)
+  socket.on('pedir-estado', responder(async () => {
+    const estado = await estadoAdmin();
+    socket.emit('admin-estado', estado);
+    return {};
+  }));
+
+  // Liberar todos los bloqueos temporales (no toca reservas confirmadas)
+  socket.on('admin-liberar-locks', responder(() => {
+    const ids = locks.listar().map((b) => b.habitacionId);
+    ids.forEach((id) => {
+      locks.liberar(id);
+      realtime.emitir('habitacion-desbloqueada', { habitacionId: id });
+    });
+    bitacora.registrar('admin', `Administrador liberó ${ids.length} bloqueo(s) temporal(es)`, 'admin');
+    return { liberados: ids.length };
+  }));
+
+  // Resetear hotel: cancela todas las reservas activas/en_curso y devuelve habitaciones a disponible
+  socket.on('admin-reset', responder(async () => {
+    await transaccion(async (conn) => {
+      await conn.query(
+        `UPDATE reservas SET estado = 'cancelada' WHERE estado IN ('activa','en_curso')`
+      );
+      await conn.query(`UPDATE habitaciones SET estado = 'disponible'`);
+    });
+
+    // Liberar todos los locks en memoria
+    locks.listar().forEach((b) => {
+      locks.liberar(b.habitacionId);
+      realtime.emitir('habitacion-desbloqueada', { habitacionId: b.habitacionId });
+    });
+
+    // Notificar a todos los clientes que el estado cambió
+    const estado = await estadoInicial();
+    io.emit('init', estado);
+
+    await bitacora.registrar('admin', 'Hotel reseteado (reservas canceladas, habitaciones liberadas)', 'admin');
+    return {};
+  }));
+
+  socket.on('disconnect', () => {
+    console.log(`Cliente desconectado: ${socket.id}`);
+    locks.liberarDeSocket(socket.id).forEach((habitacionId) =>
+      realtime.emitir('habitacion-desbloqueada', { habitacionId })
+    );
   });
 
-  // Manejar la reserva temporal de una habitación.
-  socket.on('reserve', (roomId) => {
-    reserveRoom(roomId, socket.username);
-  });
-
-  // Manejar la liberación de una habitación reservada.
-  socket.on('release', (roomId) => {
-    releaseRoom(roomId, socket.username);
-  });
-  
-  // Confirmar la reserva de las habitaciones seleccionadas.
-  socket.on('book', (roomIds) => {
-    bookRooms(roomIds, socket.username);
-  });
-
-  // Acciones del panel de administración.
-  socket.on('admin:releaseAll', () => {
-    resetRooms(true);
-  });
-
-  socket.on('admin:reset', () => {
-    resetRooms(false);
-  });
+  estadoInicial()
+    .then((estado) => socket.emit('init', estado))
+    .catch((err) => console.error('No se pudo enviar el estado inicial:', err.message));
 });
 
+const PORT = Number(process.env.PORT) || 3000;
 
-//Iniciar el servidor en el puerto
-const PORT = 3000;
-server.listen(PORT, () => {
-  console.log(`Servidor activo en http://localhost:${PORT}`);
-});
+async function iniciar() {
+  try {
+    await pool.query('SELECT 1');
+  } catch (err) {
+    console.error(`No se pudo conectar a MySQL (${err.code || err.message}).`);
+    console.error('Revise .env y que el esquema (schema.sql + seed.sql) esté cargado.');
+    process.exit(1);
+  }
+  server.listen(PORT, () => console.log(`HotelSync escuchando en http://localhost:${PORT}`));
+}
 
-const TCP_PORT = 4000;
-const UDP_PORT = 4001;
-tcpServer.listen(TCP_PORT, () => {
-  console.log(`Servidor TCP activo en tcp://localhost:${TCP_PORT}`);
-});
-udpServer.bind(UDP_PORT, () => {
-  console.log(`Servidor UDP activo en udp://localhost:${UDP_PORT}`);
-});
+iniciar();
