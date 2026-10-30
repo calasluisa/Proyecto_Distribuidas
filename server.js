@@ -45,7 +45,7 @@ async function estadoInicial() {
   };
 }
 
-// Estado que recibe el panel de administrador (incluye ingresos)
+// Estado que recibe el panel de administrador
 async function estadoAdmin() {
   const [pisos, tipos, habs, ingresosRes] = await Promise.all([
     habitaciones.pisos(),
@@ -65,7 +65,7 @@ async function estadoAdmin() {
   };
 }
 
-// Envuelve un manejador para responder con { ok, ... } o { ok: false, error }
+// Envuelve un manejador para responder con un ok y el error
 function responder(fn) {
   return async (datos, cb) => {
     const respuesta = typeof cb === 'function' ? cb : () => {};
@@ -210,14 +210,14 @@ io.on('connection', (socket) => {
 
   // ---- ADMIN ----
 
-  // El panel de administrador pide el estado completo (incluye ingresos)
+  // El panel de administrador pide el estado completo 
   socket.on('pedir-estado', responder(async () => {
     const estado = await estadoAdmin();
     socket.emit('admin-estado', estado);
     return {};
   }));
 
-  // Liberar todos los bloqueos temporales (no toca reservas confirmadas)
+  // Liberar todos los bloqueos temporales
   socket.on('admin-liberar-locks', responder(() => {
     const ids = locks.listar().map((b) => b.habitacionId);
     ids.forEach((id) => {

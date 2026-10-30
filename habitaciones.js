@@ -10,7 +10,7 @@ const SELECT_HABITACION = `
   JOIN pisos p ON p.id = h.piso_id
   JOIN tipos_habitacion t ON t.id = h.tipo_id`;
 
-// Reserva actual de una habitación (la que define el estado de hoy)
+// Reserva actual de una habitación 
 async function reservaActualDe(habitacionId, hoyStr) {
   const [filas] = await pool.query(
     `SELECT r.id, r.fecha_entrada AS fechaEntrada, r.fecha_salida AS fechaSalida, r.estado,

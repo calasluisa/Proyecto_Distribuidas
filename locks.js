@@ -63,7 +63,7 @@ function liberarDeSocket(socketId) {
 
 // Ejecuta fn cuando le toca el turno sobre las habitaciones indicadas.
 async function conBloqueo(ids, fn) {
-  const ordenados = [...new Set(ids)].sort((a, b) => a - b);   // mismo orden: evita interbloqueos
+  const ordenados = [...new Set(ids)].sort((a, b) => a - b);   // mismo orden y asi evita interbloqueos
   const liberadores = [];
   for (const id of ordenados) {
     const anterior = colas.get(id) || Promise.resolve();
